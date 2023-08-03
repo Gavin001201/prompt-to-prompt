@@ -128,7 +128,7 @@ def get_refinement_mapper(prompts, tokenizer, max_len=77):
     return torch.stack(mappers), torch.stack(alphas)
 
 
-def get_word_inds(text: str, word_place: int, tokenizer):
+def get_word_inds(text: str, word_place: int, tokenizer):   # 找到需要替换的单词编码后的索引
     split_text = text.split(" ")
     if type(word_place) is str:
         word_place = [i for i, word in enumerate(split_text) if word_place == word]
@@ -149,20 +149,20 @@ def get_word_inds(text: str, word_place: int, tokenizer):
     return np.array(out)
 
 
-def get_replacement_mapper_(x: str, y: str, tokenizer, max_len=77):
-    words_x = x.split(' ')
+def get_replacement_mapper_(x: str, y: str, tokenizer, max_len=77):     # 获取原句与目标句注意力图替换的映射图
+    words_x = x.split(' ')      # 分隔成单个词的形式
     words_y = y.split(' ')
     if len(words_x) != len(words_y):
         raise ValueError(f"attention replacement edit can only be applied on prompts with the same length"
                          f" but prompt A has {len(words_x)} words and prompt B has {len(words_y)} words.")
-    inds_replace = [i for i in range(len(words_y)) if words_y[i] != words_x[i]]
-    inds_source = [get_word_inds(x, i, tokenizer) for i in inds_replace]
-    inds_target = [get_word_inds(y, i, tokenizer) for i in inds_replace]
+    inds_replace = [i for i in range(len(words_y)) if words_y[i] != words_x[i]]     # 找出原文本与目标文本间不一致单词的索引
+    inds_source = [get_word_inds(x, i, tokenizer) for i in inds_replace]            # 找到需要替换的单词在编码后的原句中的索引
+    inds_target = [get_word_inds(y, i, tokenizer) for i in inds_replace]            # 找到需要替换的单词在编码后的目标句中索引
     mapper = np.zeros((max_len, max_len))
     i = j = 0
     cur_inds = 0
     while i < max_len and j < max_len:
-        if cur_inds < len(inds_source) and inds_source[cur_inds][0] == i:
+        if cur_inds < len(inds_source) and inds_source[cur_inds][0] == i:           
             inds_source_, inds_target_ = inds_source[cur_inds], inds_target[cur_inds]
             if len(inds_source_) == len(inds_target_):
                 mapper[inds_source_, inds_target_] = 1
@@ -186,11 +186,11 @@ def get_replacement_mapper_(x: str, y: str, tokenizer, max_len=77):
 
 
 
-def get_replacement_mapper(prompts, tokenizer, max_len=77):
-    x_seq = prompts[0]
+def get_replacement_mapper(prompts, tokenizer, max_len=77):     # 获取原句与目标句注意力图替换的映射图
+    x_seq = prompts[0]  # 原句
     mappers = []
     for i in range(1, len(prompts)):
         mapper = get_replacement_mapper_(x_seq, prompts[i], tokenizer, max_len)
-        mappers.append(mapper)
-    return torch.stack(mappers)
+        mappers.append(mapper)      # [3, 77, 77]
+    return torch.stack(mappers)     # [3, 77, 77], 基本是对角线矩阵
 

@@ -50,14 +50,15 @@ def view_images(images, num_rows=1, offset_ratio=0.02):
     h, w, c = images[0].shape
     offset = int(h * offset_ratio)
     num_cols = num_items // num_rows
-    image_ = np.ones((h * num_rows + offset * (num_rows - 1),
+    image_ = np.ones((h * num_rows + offset * (num_rows - 1),       # 图与图之间的间隔
                       w * num_cols + offset * (num_cols - 1), 3), dtype=np.uint8) * 255
-    for i in range(num_rows):
+    for i in range(num_rows):       # 按顺序排列图片
         for j in range(num_cols):
             image_[i * (h + offset): i * (h + offset) + h:, j * (w + offset): j * (w + offset) + w] = images[
                 i * num_cols + j]
 
     pil_img = Image.fromarray(image_)
+    pil_img.save('/mnt/workspace/Project/prompt-to-prompt/reconstruction.jpg')
     display(pil_img)
 
 
@@ -66,10 +67,10 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         noise_pred_uncond = model.unet(latents, t, encoder_hidden_states=context[0])["sample"]
         noise_prediction_text = model.unet(latents, t, encoder_hidden_states=context[1])["sample"]
     else:
-        latents_input = torch.cat([latents] * 2)
-        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]
+        latents_input = torch.cat([latents] * 2)        # [8, 4, 32, 32]
+        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]  # [2, 4, 32, 32]
         noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
-    noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
+    noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)   # [1, 4, 32, 32]
     latents = model.scheduler.step(noise_pred, t, latents)["prev_sample"]
     latents = controller.step_callback(latents)
     return latents
@@ -85,12 +86,13 @@ def latent2image(vae, latents):
 
 
 def init_latent(latent, model, height, width, generator, batch_size):
+    '''初始化输入到生成模型(model.unet)中的随机噪声(latent)'''
     if latent is None:
-        latent = torch.randn(
+        latent = torch.randn(       # [1, 4, 32, 32]
             (1, model.unet.in_channels, height // 8, width // 8),
             generator=generator,
         )
-    latents = latent.expand(batch_size,  model.unet.in_channels, height // 8, width // 8).to(model.device)
+    latents = latent.expand(batch_size,  model.unet.in_channels, height // 8, width // 8).to(model.device)      # 复制
     return latent, latents
 
 
@@ -108,13 +110,13 @@ def text2image_ldm(
     height = width = 256
     batch_size = len(prompt)
     
-    uncond_input = model.tokenizer([""] * batch_size, padding="max_length", max_length=77, return_tensors="pt")
-    uncond_embeddings = model.bert(uncond_input.input_ids.to(model.device))[0]
+    uncond_input = model.tokenizer([""] * batch_size, padding="max_length", max_length=77, return_tensors="pt")     # 无条件的输入，全为pad，[4, 77]
+    uncond_embeddings = model.bert(uncond_input.input_ids.to(model.device))[0]      # [4, 77, 1280]
     
-    text_input = model.tokenizer(prompt, padding="max_length", max_length=77, return_tensors="pt")
-    text_embeddings = model.bert(text_input.input_ids.to(model.device))[0]
-    latent, latents = init_latent(latent, model, height, width, generator, batch_size)
-    context = torch.cat([uncond_embeddings, text_embeddings])
+    text_input = model.tokenizer(prompt, padding="max_length", max_length=77, return_tensors="pt")      # 文本输入，[3, 77]
+    text_embeddings = model.bert(text_input.input_ids.to(model.device))[0]          # [4, 77, 1280]
+    latent, latents = init_latent(latent, model, height, width, generator, batch_size)      # 初始化随机噪声[4, 4, 32, 32]
+    context = torch.cat([uncond_embeddings, text_embeddings])                       # [8, 77, 1280]
     
     model.scheduler.set_timesteps(num_inference_steps)
     for t in tqdm(model.scheduler.timesteps):
@@ -122,7 +124,7 @@ def text2image_ldm(
     
     image = latent2image(model.vqvae, latents)
    
-    return image, latent
+    return image, latent    # [1, 256, 256, 3], [1, 4, 32, 32]
 
 
 @torch.no_grad()
@@ -170,7 +172,7 @@ def text2image_ldm_stable(
     return image, latent
 
 
-def register_attention_control(model, controller):
+def register_attention_control(model, controller):    # 在模型中注册注意力控制器，以实现注意力运算并将注意力图存储到控制器中
     def ca_forward(self, place_in_unet):
         to_out = self.to_out
         if type(to_out) is torch.nn.modules.container.ModuleList:
@@ -218,7 +220,7 @@ def register_attention_control(model, controller):
     if controller is None:
         controller = DummyController()
 
-    def register_recr(net_, count, place_in_unet):
+    def register_recr(net_, count, place_in_unet):      # 递归遍历 net_ 中的所有子模块（包括 net_ 本身），并对其中的 CrossAttention 进行注册操作
         if net_.__class__.__name__ == 'CrossAttention':
             net_.forward = ca_forward(net_, place_in_unet)
             return count + 1
@@ -228,16 +230,16 @@ def register_attention_control(model, controller):
         return count
 
     cross_att_count = 0
-    sub_nets = model.unet.named_children()
+    sub_nets = model.unet.named_children()  # 获取子模块并返回迭代器对象，该迭代器对象每次迭代返回一个元组，包含子模块的名称和子模块对象本身
     for net in sub_nets:
-        if "down" in net[0]:
+        if "down" in net[0]:                # 从模块名判断是否包含注意力层
             cross_att_count += register_recr(net[1], 0, "down")
         elif "up" in net[0]:
             cross_att_count += register_recr(net[1], 0, "up")
         elif "mid" in net[0]:
             cross_att_count += register_recr(net[1], 0, "mid")
 
-    controller.num_att_layers = cross_att_count
+    controller.num_att_layers = cross_att_count     # 统计模型内 CrossAttention 模块的数量
 
     
 def get_word_inds(text: str, word_place: int, tokenizer):
@@ -265,7 +267,7 @@ def update_alpha_time_word(alpha, bounds: Union[float, Tuple[float, float]], pro
                            word_inds: Optional[torch.Tensor]=None):
     if type(bounds) is float:
         bounds = 0, bounds
-    start, end = int(bounds[0] * alpha.shape[0]), int(bounds[1] * alpha.shape[0])
+    start, end = int(bounds[0] * alpha.shape[0]), int(bounds[1] * alpha.shape[0])   # 0, 40
     if word_inds is None:
         word_inds = torch.arange(alpha.shape[2])
     alpha[: start, prompt_ind, word_inds] = 0
@@ -277,19 +279,20 @@ def update_alpha_time_word(alpha, bounds: Union[float, Tuple[float, float]], pro
 def get_time_words_attention_alpha(prompts, num_steps,
                                    cross_replace_steps: Union[float, Dict[str, Tuple[float, float]]],
                                    tokenizer, max_num_words=77):
+    '''# 获取特定的注意力矩阵,前面的时间步中注意力权重为1, 后面为0'''
     if type(cross_replace_steps) is not dict:
         cross_replace_steps = {"default_": cross_replace_steps}
     if "default_" not in cross_replace_steps:
         cross_replace_steps["default_"] = (0., 1.)
-    alpha_time_words = torch.zeros(num_steps + 1, len(prompts) - 1, max_num_words)
-    for i in range(len(prompts) - 1):
-        alpha_time_words = update_alpha_time_word(alpha_time_words, cross_replace_steps["default_"],
-                                                  i)
+    alpha_time_words = torch.zeros(num_steps + 1, len(prompts) - 1, max_num_words)      # [51, 3, 77]
+    for i in range(len(prompts) - 1):       # [start:end] 的位置全为1，[end:]全为0， [53, 1, 77]
+        alpha_time_words = update_alpha_time_word(alpha_time_words, cross_replace_steps["default_"], i)
+        
     for key, item in cross_replace_steps.items():
         if key != "default_":
              inds = [get_word_inds(prompts[i], key, tokenizer) for i in range(1, len(prompts))]
              for i, ind in enumerate(inds):
                  if len(ind) > 0:
                     alpha_time_words = update_alpha_time_word(alpha_time_words, item, i, ind)
-    alpha_time_words = alpha_time_words.reshape(num_steps + 1, len(prompts) - 1, 1, 1, max_num_words)
+    alpha_time_words = alpha_time_words.reshape(num_steps + 1, len(prompts) - 1, 1, 1, max_num_words)       # [53, 3, 1, 1, 77]
     return alpha_time_words
